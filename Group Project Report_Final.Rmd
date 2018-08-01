@@ -1,0 +1,419 @@
+---
+title: "Santander Value Prediction Project"
+author: "Group 7: Lavanya Kanagaraj, Priya Rangarajan, Alekhya Pogaku, Ivan Filippov"
+date: "July 25, 2018"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 5
+---
+<script>
+   $(document).ready(function() {
+     $head = $('#header');
+     $head.prepend('<img src=\"https://imgur.com/z55cdb1.gif\" style=\"float: right;width: 250px;height: 200px\"/>')
+   });
+</script>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#![](https://imgur.com/z55cdb1.gif)
+```
+# **Business Understanding**
+
+## **Project summary**
+
+According to Epsilon research, 80% of customers are more likely to do business with a company if it provides personalized service. Banking is no exception. The digitalization of everyday lives means that customers expect services to be delivered in a personalized and timely manner, often before they have even realized they need the service.
+
+[Santander Group](https://www.santanderbank.com/us/personal) aims to go a step beyond recognizing there is a need to provide a customer financial service and intends to determine the amount or value of the customer's transaction. The primary focus is on Digital Delivery of Financial Services aimed at reinforcing distribution and the overall customer experience in the new digital environment. They strive to achieve it by using Big Data Analytics with platforms to leverage financial and non-financial information to provide better services to their customers. This means anticipating customer needs in a more concrete, but also simple and personal way. 
+
+With so many choices for financial services, this need is greater now than ever before. This is a first step that Santander strives to nail in order to personalize their services at scale.
+
+### Examples of Analytics in Banking
+
+A US bank used [machine learning](https://www.mckinsey.com/industries/high-tech/our-insights/an-executives-guide-to-machine-learning) to study the discounts its private bankers were offering to customers. Bankers claimed that they offered discounts only to valuable ones and more than made up for that with other, high-margin business. The analytics showed something different: patterns of unnecessary discounts that could easily be corrected. After the unit adopted the changes, revenues rose by 8% within a few months.
+
+A [top consumer bank](https://www.mckinsey.com/industries/financial-services/our-insights/analytics-in-banking-time-to-realize-the-value) in Asia enjoyed a large market share but lagged behind its competitors in products per customer. It used advanced analytics to explore several sets of big data: customer demographics and key characteristics, products held, credit-card statements, transaction and point-of-sale data, online and mobile transfers and payments, and credit-bureau data. The bank discovered unsuspected similarities that allowed it to define 15,000 microsegments in its customer base. It then built a next-product-to-buy model that increased the likelihood to buy three times over.
+
+## **Project objective and data mining problem definition**
+
+Project Objectives:
+
+* Anticipate customer needs
+* Provide personalized banking
+* Identify value of transactions for each potential customer
+
+Santander Group wants to predict the value of future customer transactions (target column) in the test set with the minimal error. The evaluation metric for this project is Root Mean Squared Logarithmic Error.
+
+To solve that challenge, we are planning to follow CRISP-DM outline:
+
+1. Perform preprocessing and EDA.
+2. Validate the provided partition of the available data into a training set and a test set.
+3. Build a data mining model using the training set data. We are planning to use 2 supervised (regression decision tree vs linear regression) methods and compare the results. 
+4. Evaluate the data mining model using the test set data and achieve the minimal error across methods.
+5. Determine whether all the facets of the objective have been addressed or there are subtler interesting areas.
+6. Make conclusions about the model results and produce the report for deployment.
+
+
+# **Data Understanding & Analysis**
+
+## **Data at a glance** 
+
+We are provided with an anonymized dataset containing numeric feature variables, the numeric target column, and a string ID column.
+
+File descriptions:
+
+* train.csv - the training set;
+* test.csv - the test set.
+
+```{r datasummary, echo=TRUE}
+transaction.data <- read.csv(file="train.csv", header=TRUE, sep=",")
+attach(transaction.data)
+options("scipen" = 999, "digits" = 10)
+str(transaction.data, list.len = 10, vec.len = 5)
+summary <- summary.data.frame(transaction.data)
+summary[1:6, 1:10]
+```
+
+Preliminary observations:
+
+1. Time series nature - the dataset appears to be a time series in both dimensions, row wise and column wise.
+
+
+2. Disguised meaning of the columns - each column seems to represent individual transaction amounts, possibly related to different types.
+
+
+## **Exploratory Data Analysis**
+
+```{r packages, echo=TRUE, message=FALSE}
+library(DataExplorer)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+library(plotly)
+library(e1071)
+library(tidyr)
+library(purrr)
+```
+
+First, we want to assess the data quality in terms of missing values and take a closer look at the target variable and its distribution.
+
+```{r explore0, echo=TRUE}
+#plot_missing(transaction.data)
+#transaction.data[!complete.cases(transaction.data),]
+#sapply(transaction.data, function(x) sum(is.na(x)))
+#Due to the size of the data set, commands above are difficult to print in the report
+sum(is.na(transaction.data))
+ggplot(transaction.data,aes(x=target))+geom_histogram(fill="blue",bins=50)+scale_x_continuous(trans='log2')
+box_plot <- ggplot(transaction.data, aes(y= target)) + 
+  geom_boxplot() + 
+  ylab("Target") +
+  scale_y_continuous(trans='log2')
+box_plot
+qqnorm(transaction.data$target,
+      datax = TRUE,
+      col = "red",
+      main = "Normal Q-Q Plot of target Distribution")
+qqline(transaction.data$target,
+      col = "blue",
+      datax = TRUE)
+(min(target))
+(max(target))
+(target_lcutoff <- quantile(target,.25))
+(target_ucutoff <- quantile(target,.75))
+(median(target))
+(mean(target))
+```
+
+There are no missing values. The target variable is not normally distributed with several outliers that we will need to pay attention to during Data Preparation stage. The mean is higher than the median, so the distribution is right-skewed. Also, looking at the min and max, the range is very wide.
+
+
+
+Next, we dig deeper into the preliminary observations from the previous section. The broader hypothesis that we analyze is: columns and rows were originally time ordered and then shuffled for the competition. 
+
+num_rows / days_in_week : 4459 / 7 = 637
+num_cols / days_in_week : 4991 / 7 = 713
+
+This serves as an additional point in support of the hypothesis that the data represents weekly transactional activity. Based on other observations, this dataset does not seem to contain any aggregate features.
+
+To prepare for modeling, we want to better understand the meaning of columns & rows. Further, we evaluate whether all the data is truly significant for our analysis. The key criterion is the number of zeros vs. the number of unique values.
+
+```{r zerohistogram, echo=TRUE}
+tran.data.zero<-data.table(transaction.data)
+n_zeros <- tran.data.zero[, lapply(.SD, function(x) sum(x == 0) / length(x))] %>% unlist
+a <-list(
+  autotick = FALSE,
+  ticks = "outside",
+  tick0 = 0.6,
+  dtick = 0.1,
+  range = c(0.6, 1),
+  ticklen = 5,
+  tickwidth = 2,
+  tickcolor = toRGB("blue")
+)
+plot_ly(x = ~n_zeros, type = "histogram",
+       marker = list(color = "dodgerblue")) %>% 
+  layout(xaxis = a, title = "Histogram of % of zeros in dataset",
+  margin = list(l = 100))
+```
+
+
+![](https://i.imgur.com/XVfECgJ.jpg)
+
+*Source*: [Kaggle](https://www.kaggle.com/ogrellier/feature-scoring-vs-zeros)
+
+As a start, we select the subset of the data where columns and rows have more than 1000 non-zero values.
+
+```{r subset1, echo=TRUE}
+x<-colSums(transaction.data != 0)
+y<-colnames(transaction.data)
+x_name<-"Count"
+y_name<-"Col_name"
+Train_nz<- data.frame(x, y)
+colnames(Train_nz) <- c(x_name, y_name)
+#Include columns with non_zero values greater than 1000
+Subset1<-Train_nz[Train_nz$Count>1000,]
+Subset1$Col_name<-as.character(Subset1$Col_name)
+#head(Subset1$Col_name)
+#str(Subset1$Col_name)
+train_non_zero<-transaction.data[Subset1$Col_name]
+head(train_non_zero,3)
+
+n<-Train_nz[Train_nz$Count<=1000,]
+d<-n$Col_name
+train_1<-transaction.data[d]
+#head(train_1)
+#class(train_1)
+mean_value<-rowMeans(train_1[sapply(train_1, is.numeric)]) 
+train_non_zero$mean_Zero<-mean_value
+
+w<-rowSums(transaction.data != 0)
+t<-rownames(transaction.data)
+w_name<-"Count"
+t_name<-"Row_name"
+Train_nz2<- data.frame(w, t)
+colnames(Train_nz2) <- c(w_name, t_name)
+#head(Train_nz2)
+#Include rows with non_zero values greater than 1000
+Subset1a<-Train_nz2[Train_nz2$Count>1000,]
+Subset1a$Row_name<-as.character(Subset1a$Row_name)
+#head(Subset1a$Row_name)
+#str(Subset1a$Row_name)
+train_non_zero<-train_non_zero[Subset1a$Row_name,]
+head(train_non_zero,3)
+
+write.csv(train_non_zero, file = "train_non_zero.csv",row.names=FALSE)
+```
+
+This approach allows to identify 40 variables and 80 observations that appear to be the most impactful for target. We also added a column with the mean value for each row. Proceeding further, more advanced algorithms could be used to detect the patterns between columns and rows. The subset below is the result of a mix of feature importance, sorting columns and rows by sum of non-zeros, and correlation plus RMSE between columns.
+
+
+```{r subset2, echo=TRUE}
+trans.data<-fread("train.csv", header = TRUE)
+training.data <- trans.data[, c("ID","target","f190486d6", "58e2e02e6", "eeb9cd3aa", "9fd594eec", "6eef030c1", "15ace8c9f", "fb0f5dbfe", "58e056e12", "20aa07010", "024c577b9", "d6bb78916", "b43a7cfd5", "58232a6fb", "1702b5bf0", "324921c7b", "62e59a501", "2ec5b290f", "241f0f867", "fb49e4212", "66ace2992", "f74e8f13d", "5c6487af1", "963a49cdc", "26fc93eb7", "1931ccfdd", "703885424", "70feb1494", "491b9ee45", "23310aa6f", "e176a204a", "6619d81fc", "1db387535", "fc99f9426", "91f701ba2", "0572565c2", "190db8488", "adb64ff71", "c47340d97", "c5a231d81", "0ff32eb98"), with = F]
+training.data <- training.data[c(1757, 3809, 511, 3798, 625, 3303, 4095, 1283, 4209, 1696, 3511, 816, 245, 1383, 2071, 3492, 378, 2971, 2366, 4414, 2790, 3979, 193, 1189, 3516, 810, 4443, 3697, 235, 1382, 4384, 3418, 4396, 921, 3176, 650),]
+head(training.data,5)
+```
+
+We could also consider Principal Component Analysis to further group the variables. 
+
+```{r pca, echo=TRUE}
+train2<-subset(training.data,select=-c(target,ID))
+pc<-prcomp(train2)
+summary(pc)
+#plot(pc)
+plot(pc,type="l")
+biplot(pc)
+#attributes(pc)
+```
+
+
+The Principal Component analysis identified 36 components which is close to the total number of variables in our latest subset. Therefore we proceed with train_non_zero. 
+
+Once the desired subset is selected, we analyze its structure and identify the necessary elements for the data preparation process.
+
+
+```{r explore1, echo=TRUE}
+str(train_non_zero, list.len = 10, vec.len = 5)
+summary.subset <- summary.data.frame(train_non_zero)
+summary.subset[1:6, 1:10]
+plot_histogram(train_non_zero)
+plot_correlation(train_non_zero,type="continuous")
+```
+
+
+
+## **Data Preparation**
+
+### 1. Validate the partition.
+
+First, we create a similar subset from the test data, using exactly the same columns and similar non-zero rows.
+
+```{r partitiontest1, echo=TRUE, message = FALSE}
+subset_colnames<-colnames(train_non_zero)
+subset_colnames<-subset_colnames[1:42]
+subset_ID<-as.character(train_non_zero$ID)
+test_non_zero_base<-read.csv("test.csv", header= TRUE, sep=",")
+test_names<-names(test_non_zero_base)[names(test_non_zero_base) %in% subset_colnames]
+test_ID<-test_non_zero_base$ID[test_non_zero_base$ID %in% subset_ID]
+test_non_zero <-test_non_zero_base[, test_names]
+
+
+z<-rowSums(test_non_zero_base != 0)
+q<-rownames(test_non_zero_base)
+z_name<-"Count"
+q_name<-"Row_name"
+Train_nz3<- data.frame(z, q)
+colnames(Train_nz3) <- c(z_name, q_name)
+#head(Train_nz3)
+#Include rows with non_zero values greater than 950
+Subset1b<-Train_nz3[Train_nz3$Count>950,]
+Subset1b$Row_name<-as.character(Subset1b$Row_name)
+#head(Subset1b$Row_name)
+#str(Subset1b$Row_name)
+test_row_names<-rownames(test_non_zero)[rownames(test_non_zero) %in% Subset1b$Row_name]
+test_non_zero<-test_non_zero[test_row_names, ]
+head(test_non_zero,3)
+
+write.csv(test_non_zero, file = "test_non_zero.csv",row.names=FALSE)
+```
+
+Next, we conduct several two-sample T tests for difference in means. The null hypothesis is that the means are similar and the partition is valid. The alternative hypothesis is that the means are significantly different and the partition is invalid. We assume the significance level of 5%.
+
+```{r partitiontest2, echo=TRUE}
+mean1<-mean(train_non_zero[,3])
+mean2<-mean(test_non_zero[,2])
+sd1<-sd(train_non_zero[,3])
+sd2<-sd(test_non_zero[,2])
+l1<-length(train_non_zero[,3])
+l2<-length(test_non_zero[,2])
+dfs <- min(l1 - 1, l2 - 1)
+tdata <- (mean1 - mean2) / sqrt((sd1^2/l1)+(sd2^2/l2))
+pvalue <- 2*pt(tdata, df = dfs, lower.tail=FALSE)
+tdata; pvalue
+```
+
+Based on the test for the first predictor column, the p-value is higher than 0.05, so we don't have enough evidence to reject the null hypothesis and the partition appears valid.
+
+
+```{r partitiontest3, echo=TRUE, message= FALSE}
+mean3<-mean(train_non_zero[,4])
+mean4<-mean(test_non_zero[,3])
+sd3<-sd(train_non_zero[,4])
+sd4<-sd(test_non_zero[,3])
+l3<-length(train_non_zero[,4])
+l4<-length(test_non_zero[,3])
+dfs <- min(l3 - 1, l4 - 1)
+tdata1 <- (mean3 - mean4) / sqrt((sd3^2/l3)+(sd4^2/l4))
+pvalue1 <- 2*pt(tdata, df = dfs, lower.tail=FALSE)
+tdata1; pvalue1
+```
+
+The previous conclusion is confirmed by the next variable as well, so we will assume a valid partition for the goals of the modeling.
+
+
+### 2. Standardize and normalize variables
+
+To start off, we address the outliers, standardization, and normality of variables. First, we standardize both data sets using z-score method. 
+
+```{r trainstandard, echo=TRUE}
+train_non_zero_scaled<-scale(train_non_zero[,-1])
+train_non_zero_scaled<-data.frame(train_non_zero_scaled)
+train_non_zero_scaled$ID<-train_non_zero$ID 
+train_non_zero_scaled<-train_non_zero_scaled[c(43,1:42)]
+train_non_zero_scaled$target<-train_non_zero$target
+
+#Plot correlation
+plot_correlation(train_non_zero_scaled,type="continuous")
+pairs(train_non_zero_scaled[2:10])
+```
+
+```{r teststand, echo=TRUE}
+test_non_zero_scaled<-scale(test_non_zero[,-1])
+test_non_zero_scaled<-data.frame(test_non_zero_scaled)
+test_non_zero_scaled$ID<-test_non_zero$ID 
+test_non_zero_scaled<-test_non_zero_scaled[c(41,1:40)]
+
+#Plot correlation
+plot_correlation(test_non_zero_scaled,type="continuous")
+pairs(test_non_zero_scaled[2:10])
+```
+
+Next, we analyze and, if necessary, remove outliers.
+
+```{r targetoutlier, echo=TRUE}
+#check the repition between this old code segment and the new one
+lif_target<-quantile(train_non_zero$target,.25)-1.5*IQR(train_non_zero$target)
+print(lif_target)
+uif_target<-quantile(train_non_zero$target,.75)+1.5*IQR(train_non_zero$target)
+print(uif_target)
+uoutlier.df <- train_non_zero[train_non_zero$target>uif_target]
+(num.up.out <- length(uoutlier.df))
+loutlier.df <- train_non_zero[train_non_zero$target<lif_target]
+(num.low.out <- length(loutlier.df))
+```
+
+```{r predictoroutlier, echo=TRUE}
+outliers <- function(dataframe){
+  dataframe %>%
+    select_if(is.numeric) %>% 
+    map(~ boxplot.stats(.x)$out) 
+}
+outliers(train_non_zero_scaled)
+```
+
+Finally, we transform variables to improve normality for modelling.
+
+```{r targetnormal, echo=TRUE}
+ggplot(train_non_zero_scaled,aes(x=target))+geom_histogram(fill="blue")
+ggplot(train_non_zero_scaled,aes(x=target))+geom_histogram(fill="blue",bins=50)+scale_x_log10()
+summary(train_non_zero_scaled$target)
+log_target<-log(train_non_zero_scaled$target)
+skewness(log_target)
+```
+
+
+*code to come for predictors, if necessary*
+
+
+
+
+
+### 3. Bin variables
+
+For some of the numeric predictors, we see the opportunity to apply equal width binning.
+
+*code to come*
+
+
+
+
+
+Also, as we plan to compare the linear regression with regression decision tree, we have decided to bin the target variable.
+
+```{r decisiontree0, echo=TRUE}
+#Binning Target Variable
+boxplot(train_non_zero_scaled$target)
+set.seed(1)
+bins<-5
+minimumVal<-min(train_non_zero_scaled$target)
+maximumVal<-max(train_non_zero_scaled$target)
+width=(maximumVal-minimumVal)/bins;
+train_non_zero_scaled$bin_target<-cut(train_non_zero_scaled$target, breaks=seq(minimumVal, maximumVal, width))
+
+#plot frequencies in the bins
+barplot(table(cut(train_non_zero_scaled$target, breaks=seq(minimumVal, maximumVal, width))))
+```
+
+
+
+
+
+
+# **Modeling, Evaluation and Reporting**
+1. Build 2 models and compare results
+
+
+
+
+2. Make conclusions
