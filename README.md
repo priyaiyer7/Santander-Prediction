@@ -1,5 +1,7 @@
 # Santander-Project
 Santander Value Prediction Challenge
+
+
 Project summary
 According to Epsilon research, 80% of customers are more likely to do business with a company if it provides personalized service. Banking is no exception. The digitalization of everyday lives means that customers expect services to be delivered in a personalized and timely manner, often before they have even realized they need the service.
 
